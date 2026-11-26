@@ -1,5 +1,67 @@
 # Simulink KUKSA V2 prototype
 
+## Tire-pressure model
+
+The tire-pressure model is a separate vehicle test experience. It uses the
+`TirePressureSystem` MATLAB System block and the V2 Python bridge to publish
+four tire-pressure sensors and their low-pressure flags directly through gRPC.
+No external tire provider is required.
+
+The native Windows copy and model are located at:
+
+```text
+C:\Tools\vss-tire-demo\simulink
+C:\Tools\vss-tire-demo\model\tire_pressure_demo.slx
+C:\Tools\vss-tire-demo\model\tire_pressure_demo.sldd
+```
+
+The model publishes these VSS paths once per second:
+
+- `Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure`
+- Their corresponding `IsPressureLow` signals
+
+Open and run it in MATLAB:
+
+```matlab
+pyenv('Version', 'C:\temp\vss-kuksa-python-3.13.5\python.exe', ...
+      'ExecutionMode', 'OutOfProcess');
+
+addpath('C:\Tools\vss-tire-demo\simulink');
+addpath('C:\Tools\vss-tire-demo\model');
+rehash;
+
+open_system('C:\Tools\vss-tire-demo\model\tire_pressure_demo.slx');
+set_param('tire_pressure_demo', 'DataDictionary', 'tire_pressure_demo.sldd');
+set_param('tire_pressure_demo/KUKSA Tire Pressure', ...
+          'System', 'TirePressureSystem', ...
+          'Host', '127.0.0.1', ...
+          'Port', '55556', ...
+          'Timeout', '3', ...
+          'SampleTime', '1.0', ...
+          'PressureDropPerSecond', '1', ...
+          'LowPressureThreshold', '210');
+set_param('tire_pressure_demo', 'SimulationCommand', 'update');
+set_param('tire_pressure_demo', 'StopTime', 'inf', ...
+          'EnablePacing', 'on', 'PacingRate', '1');
+set_param('tire_pressure_demo', 'SimulationCommand', 'start');
+```
+
+Stop the model with:
+
+```matlab
+set_param('tire_pressure_demo', 'SimulationCommand', 'stop');
+```
+
+The MATLAB System block calls the KUKSA Python SDK, which uses gRPC over TCP
+on `Host:Port`. This is not a plain socket or HTTP polling implementation.
+Pressure starts at `220, 218, 225, 223 kPa` and decreases by 1 kPa at subsequent
+one-second steps. The low-pressure flags become true below 210 kPa.
+
+## ABS prototype
+
 This simulation-only prototype connects three example paths to a KUKSA VAL V2
 gRPC server. The model uses `KuksaV2System`, which calls the Python bridge;
 the data dictionary defines the four output signal objects. The paths are
