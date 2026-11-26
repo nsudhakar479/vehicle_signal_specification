@@ -13,6 +13,13 @@ from kuksa.val.v2 import types_pb2, val_pb2, val_pb2_grpc
 SPEED_PATH = "Vehicle.Speed"
 ENGAGED_PATH = "Vehicle.ADAS.ABS.IsEngaged"
 ENABLE_PATH = "Vehicle.ADAS.ABS.IsEnabled"
+TIRE_PRESSURE_PATHS = (
+    "Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure",
+)
+TIRE_LOW_PATHS = tuple(path.replace(".Pressure", ".IsPressureLow") for path in TIRE_PRESSURE_PATHS)
 
 
 def publish(stub, path, value):
@@ -49,7 +56,17 @@ def run(port):
                 speed = 40.0 + 20.0 * math.sin((time.monotonic() - start) / 5.0)
                 publish(stub, SPEED_PATH, types_pb2.Value(float=speed))
                 publish(stub, ENGAGED_PATH, types_pb2.Value(bool=True))
-                print(f"Synthetic speed: {speed:.1f} km/h; ABS engaged: false", flush=True)
+                pressures = (
+                    220 + 8 * math.sin((time.monotonic() - start) / 6),
+                    218 + 6 * math.sin((time.monotonic() - start) / 7),
+                    225 + 7 * math.sin((time.monotonic() - start) / 8),
+                    223 + 5 * math.sin((time.monotonic() - start) / 9),
+                )
+                for path, pressure in zip(TIRE_PRESSURE_PATHS, pressures):
+                    publish(stub, path, types_pb2.Value(uint32=round(pressure)))
+                for path in TIRE_LOW_PATHS:
+                    publish(stub, path, types_pb2.Value(bool=False))
+                print(f"Synthetic speed: {speed:.1f} km/h; ABS engaged: true; tire pressures: {pressures}", flush=True)
                 stopped.wait(1.0)
         except grpc.RpcError as error:
             print(f"Test feed failed: {error}", flush=True)

@@ -84,6 +84,53 @@ The generator creates:
 
 The JSON SHA-256 is recorded in both files. A version label and hash identify the exported artifact, but they do not replace source, overlay, unit, quantity, and tool provenance. Unexpanded instance nodes are rejected.
 
+## Four-Tire Pressure Model
+
+A separate tire-pressure model is available at
+`C:\Tools\vss-tire-demo\model\tire_pressure_demo.slx` with dictionary
+`C:\Tools\vss-tire-demo\model\tire_pressure_demo.sldd`. It exposes:
+
+- `Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure`
+- `Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure`
+- Corresponding `IsPressureLow` booleans
+
+The model publishes once per second and outputs four unsigned pressure values in kPa plus four low-pressure flags. MATLAB owns the synthetic tire data; no external tire provider is required.
+
+Add the native Windows paths and open the model:
+
+```matlab
+addpath('C:\Tools\vss-tire-demo\simulink');
+addpath('C:\Tools\vss-tire-demo\model');
+rehash;
+
+which('TirePressureSystem.m')
+open_system('C:\Tools\vss-tire-demo\model\tire_pressure_demo.slx');
+```
+
+Configure and start the model:
+
+```matlab
+set_param('tire_pressure_demo/KUKSA Tire Pressure', ...
+          'System', 'TirePressureSystem', ...
+          'Host', '127.0.0.1', ...
+          'Port', '55556', ...
+          'Timeout', '3', ...
+          'SampleTime', '1.0', ...
+          'PressureDropPerSecond', '1', ...
+          'LowPressureThreshold', '210');
+set_param('tire_pressure_demo', 'DataDictionary', 'tire_pressure_demo.sldd');
+set_param('tire_pressure_demo', 'SimulationCommand', 'update');
+set_param('tire_pressure_demo', 'StopTime', 'inf', ...
+          'EnablePacing', 'on', 'PacingRate', '1');
+set_param('tire_pressure_demo', 'SimulationCommand', 'start');
+```
+
+The tire System block sends KUKSA VAL V2 `PublishValue` RPCs through gRPC over TCP. The broker stores and returns the latest values. The system starts at `220, 218, 225, 223 kPa`, then decreases by 1 kPa at subsequent one-second steps.
+
+The tire pressures are synthetic and generated inside the MATLAB System block. They do not claim ABS or another actuator.
+
 ## Model Artifacts
 
 The generated model contains:
@@ -289,7 +336,7 @@ The implementation uses KUKSA VAL V2:
 - `GetValues`: reads `Vehicle.Speed` and `Vehicle.ADAS.ABS.IsEngaged`.
 - `Actuate`: sends `Vehicle.ADAS.ABS.IsEnabled`.
 - `OpenProviderStream`: claims and receives actuator requests.
-- `PublishValue`: the test provider writes synthetic sensor and actuator states.
+- `PublishValue`: the MATLAB tire model writes synthetic tire sensor states; a test ABS provider may write actuator states.
 
 V2 differs from V1: V1 separates current and target values for some APIs, while V2 has a single data value and forwards actuator intent to an actuator provider.
 
@@ -361,11 +408,11 @@ The CLI may be querying port 55555 or a different broker. Start it with `--serve
 
 ### The broker has no value
 
-A broker starts with unavailable datapoints. Start the synthetic provider or run a physical/provider process that publishes the sensor.
+A broker starts with unavailable datapoints. Start the MATLAB tire model or run a physical/provider process that publishes the sensor.
 
-### The speed appears once instead of changing
+### A tire pressure appears unchanged
 
-The model itself polls every 0.1 seconds. A changing speed also requires a continuously publishing provider. The test provider publishes once per second. Do not set a one-shot publishing command and expect continuous updates.
+Confirm the tire model is running, its sample time is `1.0`, and Python bridge method `publish_tires` is available. The block decreases pressure at subsequent 1-second steps. Inspect the KUKSA datapoint timestamp to distinguish an unchanged broker value from an absent or stopped publisher.
 
 ### Actuation reports unavailable or denied
 
@@ -384,7 +431,7 @@ Stop the model from the Simulink Stop button or MATLAB:
 set_param('kuksa_v2_demo', 'SimulationCommand', 'stop');
 ```
 
-Stop the synthetic provider with Ctrl+C in its terminal.
+Stop the tire model with `set_param('tire_pressure_demo', 'SimulationCommand', 'stop')`.
 
 Stop the test broker with Ctrl+C or Docker:
 

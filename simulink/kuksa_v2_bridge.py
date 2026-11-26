@@ -12,6 +12,15 @@ SPEED_PATH = "Vehicle.Speed"
 ENGAGED_PATH = "Vehicle.ADAS.ABS.IsEngaged"
 ENABLE_PATH = "Vehicle.ADAS.ABS.IsEnabled"
 
+TIRE_PRESSURE_PATHS = (
+    "Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row1.Wheel.Right.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row2.Wheel.Left.Tire.Pressure",
+    "Vehicle.Chassis.Axle.Row2.Wheel.Right.Tire.Pressure",
+)
+
+TIRE_LOW_PATHS = tuple(path.replace(".Pressure", ".IsPressureLow") for path in TIRE_PRESSURE_PATHS)
+
 
 class KuksaV2Bridge:
     def __init__(
@@ -54,9 +63,56 @@ class KuksaV2Bridge:
         fields = datapoint.value.ListFields()
         if not fields:
             return unavailable, False
-        if len(fields) != 1 or fields[0][0].name != expected_type:
+        if len(fields) != 1:
+            raise ValueError(f"Unexpected KUKSA value type, expected {expected_type}")
+        field_name = fields[0][0].name
+        protocol_field = "uint32" if expected_type == "uint16" else expected_type
+        if field_name != protocol_field:
             raise ValueError(f"Unexpected KUKSA value type, expected {expected_type}")
         return fields[0][1], True
+
+    def read_tires(self):
+        signal_ids = [
+            *(types_pb2.SignalID(path=path) for path in TIRE_PRESSURE_PATHS),
+            *(types_pb2.SignalID(path=path) for path in TIRE_LOW_PATHS),
+        ]
+        response = self.stub.GetValues(
+            val_pb2.GetValuesRequest(signal_ids=signal_ids),
+            timeout=self.timeout,
+            metadata=self.metadata,
+        )
+        if len(response.data_points) != 8:
+            raise ValueError("KUKSA returned an unexpected number of tire datapoints")
+        pressure = []
+        for datapoint in response.data_points[:4]:
+            value, valid = self._value(datapoint, "uint16", 0)
+            pressure.append(value if valid else 0)
+        low = []
+        for datapoint in response.data_points[4:]:
+            value, valid = self._value(datapoint, "bool", False)
+            low.append(value if valid else False)
+        return tuple(pressure + low)
+
+    def publish_tires(self, pressures, low_flags):
+        if len(pressures) != 4 or len(low_flags) != 4:
+            raise ValueError("Exactly four tire pressures and four low flags are required")
+        for path, pressure in zip(TIRE_PRESSURE_PATHS, pressures):
+            pressure = int(pressure)
+            if not 0 <= pressure <= 65535:
+                raise ValueError("Tire pressure must fit in VSS uint16")
+            request = val_pb2.PublishValueRequest(
+                signal_id=types_pb2.SignalID(path=path),
+                data_point=types_pb2.Datapoint(value=types_pb2.Value(uint32=pressure)),
+            )
+            self.stub.PublishValue(request, timeout=self.timeout, metadata=self.metadata)
+        for path, low in zip(TIRE_LOW_PATHS, low_flags):
+            if not isinstance(low, bool):
+                raise TypeError("Tire low-pressure flags must be boolean")
+            request = val_pb2.PublishValueRequest(
+                signal_id=types_pb2.SignalID(path=path),
+                data_point=types_pb2.Datapoint(value=types_pb2.Value(bool=low)),
+            )
+            self.stub.PublishValue(request, timeout=self.timeout, metadata=self.metadata)
 
     def actuate(self, value):
         if not self.enable_actuation:

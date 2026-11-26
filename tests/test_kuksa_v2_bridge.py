@@ -21,6 +21,10 @@ class KuksaV2BridgeTests(unittest.TestCase):
                 test.metadata = dict(context.invocation_metadata())
                 return val_pb2.GetValuesResponse(data_points=test.datapoints)
 
+            def PublishValue(self, request, context):
+                test.requests.append(request)
+                return val_pb2.PublishValueResponse()
+
             def Actuate(self, request, context):
                 test.requests.append(request)
                 return val_pb2.ActuateResponse()
@@ -64,6 +68,26 @@ class KuksaV2BridgeTests(unittest.TestCase):
         self.assertTrue(self.requests[0].value.bool)
         with self.assertRaises(TypeError):
             self.client.actuate(1)
+
+    def test_publish_four_tire_pressures_and_low_flags(self):
+        self.client.publish_tires([221, 219, 226, 224], [False, False, False, False])
+        self.assertEqual(len(self.requests), 8)
+        self.assertEqual(self.requests[0].signal_id.path, 'Vehicle.Chassis.Axle.Row1.Wheel.Left.Tire.Pressure')
+        self.assertEqual(self.requests[0].data_point.value.uint32, 221)
+
+    def test_reads_four_tire_pressures_and_low_flags(self):
+        self.datapoints = [
+            types_pb2.Datapoint(value=types_pb2.Value(uint32=220)),
+            types_pb2.Datapoint(value=types_pb2.Value(uint32=218)),
+            types_pb2.Datapoint(value=types_pb2.Value(uint32=225)),
+            types_pb2.Datapoint(value=types_pb2.Value(uint32=223)),
+            types_pb2.Datapoint(value=types_pb2.Value(bool=False)),
+            types_pb2.Datapoint(value=types_pb2.Value(bool=False)),
+            types_pb2.Datapoint(value=types_pb2.Value(bool=True)),
+            types_pb2.Datapoint(value=types_pb2.Value(bool=False)),
+        ]
+        result = self.client.read_tires()
+        self.assertEqual(result, (220, 218, 225, 223, False, False, True, False))
 
     def test_remote_insecure_requires_opt_in(self):
         with self.assertRaisesRegex(ValueError, 'require TLS'):
